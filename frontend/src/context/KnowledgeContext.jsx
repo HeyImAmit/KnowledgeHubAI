@@ -56,6 +56,18 @@ export function KnowledgeProvider({ children }) {
     };
   }, []);
 
+  const uploadDocument = async (file, onUploadProgress) => {
+    try {
+      const createdRaw = await documentApi.uploadDocument(file, onUploadProgress);
+      const normalized = normalizeDocument(createdRaw);
+      setDocuments((prev) => [normalized, ...prev]);
+      return normalized;
+    } catch (error) {
+      console.error('Failed to upload document to backend:', error);
+      throw error;
+    }
+  };
+
   const addDocument = async (newDoc) => {
     try {
       const createdRaw = await documentApi.createDocument({
@@ -239,6 +251,7 @@ export function KnowledgeProvider({ children }) {
         setSelectedDocForDetails,
         openCitationInspector,
         closeCitationInspector,
+        uploadDocument,
         addDocument,
         deleteDocument,
         retryDocument,

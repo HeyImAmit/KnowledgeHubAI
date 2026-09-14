@@ -22,6 +22,9 @@ venv/
 
 # Uploads / generated data
 uploads/
+storage/
+backend/storage/documents/*
+!backend/storage/documents/.gitkeep
 chroma_data/
 
 # OS

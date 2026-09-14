@@ -7,7 +7,7 @@ export const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000,
+  timeout: 60000,
 });
 
 export const documentApi = {
@@ -23,6 +23,25 @@ export const documentApi = {
 
   createDocument: async (docData) => {
     const response = await apiClient.post('/documents', docData);
+    return response.data.document;
+  },
+
+  uploadDocument: async (file, onUploadProgress) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await apiClient.post('/documents/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (onUploadProgress && progressEvent.total) {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          onUploadProgress(percentCompleted);
+        }
+      },
+    });
+
     return response.data.document;
   },
 

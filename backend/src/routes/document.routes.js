@@ -1,5 +1,6 @@
 import express from "express";
 import documentService from "../services/document.service.js";
+import uploadSinglePdf from "../middleware/upload.middleware.js";
 
 const router = express.Router();
 
@@ -57,6 +58,33 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
+ * POST /api/documents/upload
+ * Real PDF upload endpoint via multipart/form-data.
+ */
+router.post("/upload", uploadSinglePdf, async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      error: "Missing file",
+      message: "Please select a PDF document to upload with field name 'file'",
+    });
+  }
+
+  try {
+    const document = await documentService.uploadAndRegisterDocument({
+      file: req.file,
+    });
+
+    return res.status(201).json({ document });
+  } catch (error) {
+    console.error("Error during document upload:", error);
+    return res.status(500).json({
+      error: "Upload failed",
+      message: error.message || "Failed to process and register document",
+    });
+  }
+});
+
+/**
  * POST /api/documents
  * Register a new document metadata record (Development / Test ingestion).
  */
@@ -92,7 +120,7 @@ router.post("/", async (req, res) => {
 
 /**
  * DELETE /api/documents/:id
- * Delete a document by UUID.
+ * Delete a document by UUID (removes metadata and physical file).
  */
 router.delete("/:id", async (req, res) => {
   const { id } = req.params;
