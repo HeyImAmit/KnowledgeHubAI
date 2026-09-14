@@ -1,55 +1,99 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { KnowledgeContext } from './KnowledgeContextInstance';
-import { initialDocuments, initialConversations, mockOverviewMetrics } from '../data/mockData';
+import { initialConversations, mockOverviewMetrics } from '../data/mockData';
+import { documentApi } from '../services/api';
+import { normalizeDocument } from '../utils/formatters';
 
 export function KnowledgeProvider({ children }) {
-  const [documents, setDocuments] = useState(initialDocuments);
+  const [documents, setDocuments] = useState([]);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
+  const [docError, setDocError] = useState(null);
+
   const [conversations, setConversations] = useState(initialConversations);
   const [activeCitation, setActiveCitation] = useState(null);
   const [isSourceDrawerOpen, setIsSourceDrawerOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [selectedDocForDetails, setSelectedDocForDetails] = useState(null);
 
-  const addDocument = (newDoc) => {
-    const docItem = {
-      id: `doc-${Date.now()}`,
-      name: newDoc.name || 'Untitled Document.pdf',
-      type: 'PDF',
-      size: newDoc.size || '4.5 MB',
-      pages: newDoc.pages || Math.floor(Math.random() * 80) + 20,
-      status: 'Processing',
-      uploadedAt: 'Just now',
-      indexedAt: null,
-      chunksCount: 0,
-      summary: newDoc.summary || 'Processing document structure and extracting key semantic sections...',
-      author: newDoc.author || 'User Upload',
-      topics: newDoc.topics || ['General Knowledge'],
-      tokensCount: 'Pending'
-    };
-
-    setDocuments((prev) => [docItem, ...prev]);
-
-    setTimeout(() => {
-      setDocuments((prev) =>
-        prev.map((d) =>
-          d.id === docItem.id
-            ? {
-                ...d,
-                status: 'Indexed',
-                indexedAt: 'Just now',
-                chunksCount: Math.floor(d.pages * 3.2),
-                tokensCount: `${Math.floor(d.pages * 850).toLocaleString()}`
-              }
-            : d
-        )
-      );
-    }, 4000);
+  const fetchDocuments = async () => {
+    setIsLoadingDocs(true);
+    setDocError(null);
+    try {
+      const rawDocs = await documentApi.getDocuments();
+      const normalized = (rawDocs || []).map(normalizeDocument);
+      setDocuments(normalized);
+    } catch (error) {
+      console.error('Failed to fetch documents from PostgreSQL backend:', error);
+      setDocError(error.response?.data?.message || error.message || 'Failed to connect to backend server');
+    } finally {
+      setIsLoadingDocs(false);
+    }
   };
 
-  const deleteDocument = (id) => {
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadInitial() {
+      try {
+        const rawDocs = await documentApi.getDocuments();
+        if (isMounted) {
+          setDocuments((rawDocs || []).map(normalizeDocument));
+          setIsLoadingDocs(false);
+        }
+      } catch (error) {
+        if (isMounted) {
+          console.error('Failed to fetch documents:', error);
+          setDocError(error.response?.data?.message || error.message || 'Failed to connect to backend server');
+          setIsLoadingDocs(false);
+        }
+      }
+    }
+
+    loadInitial();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const addDocument = async (newDoc) => {
+    try {
+      const createdRaw = await documentApi.createDocument({
+        filename: newDoc.name || 'Untitled Document.pdf',
+        original_name: newDoc.name || 'Untitled Document.pdf',
+        file_size: newDoc.file_size_raw || 4500000,
+        page_count: newDoc.pages || 45,
+        status: 'PROCESSING',
+      });
+
+      const normalized = normalizeDocument(createdRaw);
+      setDocuments((prev) => [normalized, ...prev]);
+
+      // Refresh after a moment to reflect pipeline updates
+      setTimeout(() => {
+        fetchDocuments();
+      }, 3500);
+
+      return normalized;
+    } catch (error) {
+      console.error('Failed to create document:', error);
+      throw error;
+    }
+  };
+
+  const deleteDocument = async (id) => {
+    const previousDocs = documents;
     setDocuments((prev) => prev.filter((d) => d.id !== id));
     if (selectedDocForDetails?.id === id) {
       setSelectedDocForDetails(null);
+    }
+
+    try {
+      await documentApi.deleteDocument(id);
+    } catch (error) {
+      console.error('Failed to delete document from database:', error);
+      setDocuments(previousDocs);
+      alert(`Failed to delete document: ${error.response?.data?.message || error.message}`);
     }
   };
 
@@ -60,7 +104,6 @@ export function KnowledgeProvider({ children }) {
           ? {
               ...d,
               status: 'Processing',
-              errorMessage: undefined,
               uploadedAt: 'Just now'
             }
           : d
@@ -74,9 +117,8 @@ export function KnowledgeProvider({ children }) {
             ? {
                 ...d,
                 status: 'Indexed',
-                indexedAt: 'Just now',
-                chunksCount: Math.floor(d.pages * 3.4),
-                tokensCount: `${Math.floor(d.pages * 890).toLocaleString()}`
+                uploadedAt: 'Just now',
+                chunksCount: Math.floor(d.pages * 3.4)
               }
             : d
         )
@@ -100,7 +142,7 @@ export function KnowledgeProvider({ children }) {
         title: content.slice(0, 48) + (content.length > 48 ? '...' : ''),
         lastMessage: content,
         updatedAt: 'Just now',
-        referencedDocs: ['Operating Systems.pdf', 'Database Management Systems.pdf'],
+        referencedDocs: documents.length > 0 ? [documents[0].name] : ['Technical Specification.pdf'],
         messages: [userMsg]
       };
       setConversations((prev) => [newConv, ...prev]);
@@ -121,18 +163,19 @@ export function KnowledgeProvider({ children }) {
     }
 
     setTimeout(() => {
+      const firstDocName = documents.length > 0 ? documents[0].name : 'Operating Systems.pdf';
       const simulatedAssistantMsg = {
         id: `msg-resp-${Date.now()}`,
         sender: 'assistant',
         timestamp: 'Just now',
-        content: `Based on your indexed technical documents, here is the synthesized answer regarding "${content}":\n\n1. **Core Concept**: The documented architecture leverages hierarchical indexing and deterministic state transitions.\n2. **Validation**: All components adhere to verified constraints without compromising bounded consistency or runtime throughput.\n\nAdditional implementation details and algorithmic pseudocode are cross-referenced directly in the indexed corpus.`,
+        content: `Based on your PostgreSQL indexed technical documents, here is the synthesized answer regarding "${content}":\n\n1. **Document Record Verification**: Document metadata is indexed in PostgreSQL.\n2. **Retrieval Ready**: Ready for vector chunk retrieval and semantic search.\n\nCross-referenced with active document records.`,
         citations: [
           {
             id: `cit-${Date.now()}-1`,
-            documentName: 'Operating Systems.pdf',
-            page: 42,
-            snippet: 'Hierarchical state transitions guarantee deterministic concurrency boundaries when multiple sub-processes execute under resource constraints.',
-            score: '0.91'
+            documentName: firstDocName,
+            page: 17,
+            snippet: 'Deterministic indexing and transaction verification ensure strict relational integrity across document metadata records.',
+            score: '0.93'
           }
         ]
       };
@@ -162,10 +205,21 @@ export function KnowledgeProvider({ children }) {
     setIsSourceDrawerOpen(false);
   };
 
+  const totalIndexedPages = documents
+    .filter((d) => d.status === 'Indexed')
+    .reduce((acc, curr) => acc + (curr.pages || 0), 0);
+
+  const totalKnowledgeChunks = documents
+    .filter((d) => d.status === 'Indexed')
+    .reduce((acc, curr) => acc + (curr.chunksCount || 0), 0);
+
   return (
     <KnowledgeContext.Provider
       value={{
         documents,
+        isLoadingDocs,
+        docError,
+        refreshDocuments: fetchDocuments,
         conversations,
         overviewMetrics: {
           ...mockOverviewMetrics,
@@ -173,6 +227,8 @@ export function KnowledgeProvider({ children }) {
           indexedDocuments: documents.filter((d) => d.status === 'Indexed').length,
           processingDocuments: documents.filter((d) => d.status === 'Processing').length,
           failedDocuments: documents.filter((d) => d.status === 'Failed').length,
+          totalIndexedPages: totalIndexedPages || 842,
+          totalKnowledgeChunks: totalKnowledgeChunks ? totalKnowledgeChunks.toLocaleString() : '4,120',
           totalConversations: conversations.length
         },
         activeCitation,

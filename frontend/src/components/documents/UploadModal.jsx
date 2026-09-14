@@ -75,11 +75,11 @@ export default function UploadModal() {
     const timer3 = setTimeout(() => {
       setUploadProgress(100);
       
-      const fileSizeMb = selectedFile ? (selectedFile.size / (1024 * 1024)).toFixed(1) + ' MB' : '5.8 MB';
+      const fileSizeRaw = selectedFile ? selectedFile.size : 4800000;
       
       addDocument({
         name: docName.trim() || (selectedFile ? selectedFile.name : 'Untitled Document.pdf'),
-        size: fileSizeMb,
+        file_size_raw: fileSizeRaw,
         pages: Math.floor(Math.random() * 120) + 30,
         author: author.trim() || 'Technical Author',
         topics: topics.length > 0 ? topics : ['Reference'],

@@ -5,17 +5,26 @@ import {
   LayoutGrid, 
   List, 
   Upload, 
-  RefreshCw,
-  Plus
+  RefreshCw, 
+  Plus,
+  AlertCircle
 } from 'lucide-react';
 import { useKnowledge } from '../context/useKnowledge';
 import DocumentList from '../components/documents/DocumentList';
 import DocumentCard from '../components/documents/DocumentCard';
 import Button from '../components/common/Button';
 import EmptyState from '../components/common/EmptyState';
+import LoadingState from '../components/common/LoadingState';
 
 export default function DocumentsPage() {
-  const { documents, setIsUploadModalOpen } = useKnowledge();
+  const { 
+    documents, 
+    isLoadingDocs, 
+    docError, 
+    refreshDocuments, 
+    setIsUploadModalOpen 
+  } = useKnowledge();
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'grid'
@@ -47,7 +56,7 @@ export default function DocumentsPage() {
             Document Repository
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-xl">
-            Manage textbooks, architecture specifications, and technical reference papers indexed for RAG queries.
+            Manage textbooks, architecture specifications, and technical reference papers indexed in PostgreSQL.
           </p>
         </div>
 
@@ -61,6 +70,27 @@ export default function DocumentsPage() {
           Upload Document
         </Button>
       </div>
+
+      {/* Error Banner if API connection fails */}
+      {docError && (
+        <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between gap-3 text-xs text-rose-800">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <div>
+              <span className="font-semibold">Unable to fetch from database:</span> {docError}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="danger"
+            icon={RefreshCw}
+            onClick={refreshDocuments}
+            className="text-xs shrink-0"
+          >
+            Retry Connection
+          </Button>
+        </div>
+      )}
 
       {/* Search, Filter Tabs & View Mode Bar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
@@ -126,14 +156,18 @@ export default function DocumentsPage() {
       </div>
 
       {/* Document Content */}
-      {filteredDocs.length === 0 ? (
+      {isLoadingDocs ? (
+        <LoadingState rows={5} message="Loading documents from PostgreSQL database..." />
+      ) : filteredDocs.length === 0 ? (
         <EmptyState
           icon={FileText}
-          title="No documents found"
+          title={documents.length === 0 ? "Database is empty" : "No documents match filter"}
           description={
-            searchTerm
-              ? `No documents match "${searchTerm}". Try a different keyword or reset filters.`
-              : 'There are no documents in this status category.'
+            documents.length === 0
+              ? "No documents exist in the PostgreSQL repository yet. Upload or seed documents to get started."
+              : searchTerm
+                ? `No documents match "${searchTerm}". Try a different keyword or reset filters.`
+                : 'There are no documents in this status category.'
           }
           actionLabel={searchTerm ? 'Clear Search' : 'Upload Document'}
           onAction={searchTerm ? () => setSearchTerm('') : () => setIsUploadModalOpen(true)}
