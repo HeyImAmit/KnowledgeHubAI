@@ -34,7 +34,7 @@ export async function processDocumentIngestion(id) {
     // Update document page count from extracted PDF pages
     const updatedDocument = await documentModel.updateDocumentIngestion(id, {
       page_count: ingestionResult.page_count,
-      status: "PROCESSING", // Retains PROCESSING status until vector embeddings in Phase 5
+      status: "PROCESSING",
     });
 
     return {
@@ -52,8 +52,62 @@ export async function processDocumentIngestion(id) {
 }
 
 /**
+ * Executes full document vector indexing (extraction, chunking, embeddings, ChromaDB) via FastAPI.
+ * On success: updates page_count and transitions status to INDEXED.
+ * On failure: transitions status to FAILED.
+ */
+export async function processDocumentIndexing(id) {
+  const document = await documentModel.getDocumentById(id);
+  if (!document) {
+    const error = new Error(`Document with ID '${id}' not found`);
+    error.code = "DOCUMENT_NOT_FOUND";
+    throw error;
+  }
+
+  try {
+    const indexingResult = await aiService.indexDocument(id, {
+      filename: document.filename,
+      source: document.original_name,
+    });
+
+    // On successful vector indexing, update page_count and transition status to INDEXED
+    const updatedDocument = await documentModel.updateDocumentIngestion(id, {
+      page_count: indexingResult.page_count,
+      status: "INDEXED",
+    });
+
+    return {
+      document: updatedDocument,
+      indexing: indexingResult,
+    };
+  } catch (error) {
+    console.error(`Indexing processing error for document ${id}:`, error.message);
+    // Transition status to FAILED upon vector indexing failure
+    await documentModel.updateDocumentStatus(id, "FAILED").catch((err) => {
+      console.error(`Failed to update status to FAILED for document ${id}:`, err.message);
+    });
+    throw error;
+  }
+}
+
+/**
+ * Re-indexes an existing document: resets status to PROCESSING and triggers full indexing.
+ */
+export async function reindexDocument(id) {
+  const document = await documentModel.getDocumentById(id);
+  if (!document) {
+    const error = new Error(`Document with ID '${id}' not found`);
+    error.code = "DOCUMENT_NOT_FOUND";
+    throw error;
+  }
+
+  await documentModel.updateDocumentStatus(id, "PROCESSING");
+  return await processDocumentIndexing(id);
+}
+
+/**
  * Handle transactional document upload & database registration,
- * and immediately trigger ingestion pipeline.
+ * and immediately trigger full vector indexing pipeline.
  */
 export async function uploadAndRegisterDocument({ file }) {
   if (!file) {
@@ -71,16 +125,16 @@ export async function uploadAndRegisterDocument({ file }) {
       status: "PROCESSING",
     });
 
-    // Run ingestion to extract pages and prepare chunks
+    // Run indexing pipeline to extract, chunk, embed, and store in ChromaDB
     try {
-      const { document: ingestedDoc } = await processDocumentIngestion(createdDoc.id);
-      return ingestedDoc || createdDoc;
-    } catch (ingestionError) {
+      const { document: indexedDoc } = await processDocumentIndexing(createdDoc.id);
+      return indexedDoc || createdDoc;
+    } catch (indexingError) {
       console.warn(
-        `Document ${createdDoc.id} uploaded but ingestion encountered an error:`,
-        ingestionError.message
+        `Document ${createdDoc.id} uploaded but indexing encountered an error:`,
+        indexingError.message
       );
-      // Return the document (which has status FAILED from processDocumentIngestion)
+      // Return the document (which has status FAILED from processDocumentIndexing)
       return (await documentModel.getDocumentById(createdDoc.id)) || createdDoc;
     }
   } catch (error) {
@@ -130,7 +184,7 @@ export async function updateStatus(id, status) {
 }
 
 /**
- * Remove document metadata and clean up associated physical file if present.
+ * Remove document metadata, clean up physical file, and delete ChromaDB vectors.
  */
 export async function removeDocument(id) {
   const existing = await documentModel.getDocumentById(id);
@@ -153,6 +207,14 @@ export async function removeDocument(id) {
     }
   }
 
+  // Clean up ChromaDB vectors for this document
+  try {
+    await aiService.deleteDocumentVectors(id);
+    console.log(`Deleted ChromaDB vectors for document ID ${id}.`);
+  } catch (err) {
+    console.warn(`Could not delete ChromaDB vectors for document ID ${id}:`, err.message);
+  }
+
   return deleted;
 }
 
@@ -160,8 +222,11 @@ export default {
   fetchAllDocuments,
   fetchDocumentById,
   processDocumentIngestion,
+  processDocumentIndexing,
+  reindexDocument,
   uploadAndRegisterDocument,
   registerDocument,
   updateStatus,
   removeDocument,
 };
+

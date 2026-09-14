@@ -19,3 +19,18 @@ else:
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
+# Embedding model configuration
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+# ChromaDB vector store configuration
+DEFAULT_CHROMA_DIR = (BASE_DIR / "storage" / "chroma").resolve()
+_env_chroma = os.getenv("CHROMA_PERSIST_DIRECTORY")
+if _env_chroma:
+    _chroma_path = Path(_env_chroma)
+    CHROMA_PERSIST_DIR = (_chroma_path if _chroma_path.is_absolute() else (BASE_DIR / _chroma_path)).resolve()
+else:
+    CHROMA_PERSIST_DIR = DEFAULT_CHROMA_DIR
+
+CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "knowledgehub_documents")
+
+

@@ -25,6 +25,9 @@ uploads/
 storage/
 backend/storage/documents/*
 !backend/storage/documents/.gitkeep
+ai-service/storage/chroma/*
+!ai-service/storage/chroma/.gitkeep
+storage/chroma/
 chroma_data/
 
 # OS
