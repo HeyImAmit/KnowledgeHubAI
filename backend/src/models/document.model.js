@@ -125,10 +125,38 @@ export async function deleteDocument(id) {
   return res.rows[0] || null;
 }
 
+/**
+ * Update document ingestion metadata (page_count, status).
+ */
+export async function updateDocumentIngestion(id, { page_count, status }) {
+  const sql = `
+    UPDATE documents
+    SET 
+      page_count = COALESCE($2, page_count),
+      status = COALESCE($3, status),
+      updated_at = NOW()
+    WHERE id = $1
+    RETURNING 
+      id,
+      filename,
+      original_name,
+      mime_type,
+      file_size,
+      page_count,
+      status,
+      created_at,
+      updated_at;
+  `;
+  const res = await query(sql, [id, page_count, status]);
+  return res.rows[0] || null;
+}
+
 export default {
   getAllDocuments,
   getDocumentById,
   createDocument,
   updateDocumentStatus,
+  updateDocumentIngestion,
   deleteDocument,
 };
+

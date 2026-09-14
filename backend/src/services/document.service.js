@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import documentModel from "../models/document.model.js";
+import aiService from "./ai.service.js";
 import { STORAGE_DIR } from "../middleware/upload.middleware.js";
 
 const VALID_STATUSES = ["PROCESSING", "INDEXED", "FAILED"];
@@ -14,16 +15,54 @@ export async function fetchDocumentById(id) {
 }
 
 /**
- * Handle transactional document upload & database registration.
- * If database insertion fails, the uploaded physical file is automatically cleaned up.
+ * Executes document ingestion (PDF extraction & chunking) via FastAPI AI service.
+ */
+export async function processDocumentIngestion(id) {
+  const document = await documentModel.getDocumentById(id);
+  if (!document) {
+    const error = new Error(`Document with ID '${id}' not found`);
+    error.code = "DOCUMENT_NOT_FOUND";
+    throw error;
+  }
+
+  try {
+    const ingestionResult = await aiService.ingestDocument(id, {
+      filename: document.filename,
+      source: document.original_name,
+    });
+
+    // Update document page count from extracted PDF pages
+    const updatedDocument = await documentModel.updateDocumentIngestion(id, {
+      page_count: ingestionResult.page_count,
+      status: "PROCESSING", // Retains PROCESSING status until vector embeddings in Phase 5
+    });
+
+    return {
+      document: updatedDocument,
+      ingestion: ingestionResult,
+    };
+  } catch (error) {
+    console.error(`Ingestion processing error for document ${id}:`, error.message);
+    // Transition status to FAILED upon processing failure
+    await documentModel.updateDocumentStatus(id, "FAILED").catch((err) => {
+      console.error(`Failed to update status to FAILED for document ${id}:`, err.message);
+    });
+    throw error;
+  }
+}
+
+/**
+ * Handle transactional document upload & database registration,
+ * and immediately trigger ingestion pipeline.
  */
 export async function uploadAndRegisterDocument({ file }) {
   if (!file) {
     throw new Error("NO_FILE_PROVIDED");
   }
 
+  let createdDoc = null;
   try {
-    const document = await documentModel.createDocument({
+    createdDoc = await documentModel.createDocument({
       filename: file.filename,
       original_name: file.originalname,
       mime_type: file.mimetype || "application/pdf",
@@ -32,10 +71,21 @@ export async function uploadAndRegisterDocument({ file }) {
       status: "PROCESSING",
     });
 
-    return document;
+    // Run ingestion to extract pages and prepare chunks
+    try {
+      const { document: ingestedDoc } = await processDocumentIngestion(createdDoc.id);
+      return ingestedDoc || createdDoc;
+    } catch (ingestionError) {
+      console.warn(
+        `Document ${createdDoc.id} uploaded but ingestion encountered an error:`,
+        ingestionError.message
+      );
+      // Return the document (which has status FAILED from processDocumentIngestion)
+      return (await documentModel.getDocumentById(createdDoc.id)) || createdDoc;
+    }
   } catch (error) {
-    // Clean up physical file on database failure
-    if (file.path && fs.existsSync(file.path)) {
+    // Clean up physical file on database failure before creation
+    if (!createdDoc && file.path && fs.existsSync(file.path)) {
       try {
         await fs.promises.unlink(file.path);
         console.log(`Cleaned up orphaned file '${file.path}' after database failure.`);
@@ -109,6 +159,7 @@ export async function removeDocument(id) {
 export default {
   fetchAllDocuments,
   fetchDocumentById,
+  processDocumentIngestion,
   uploadAndRegisterDocument,
   registerDocument,
   updateStatus,

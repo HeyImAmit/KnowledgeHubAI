@@ -154,4 +154,42 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/documents/:id/ingest
+ * Trigger ingestion pipeline (PDF extraction & chunking) for a stored document.
+ */
+router.post("/:id/ingest", async (req, res) => {
+  const { id } = req.params;
+
+  if (!UUID_REGEX.test(id)) {
+    return res.status(400).json({
+      error: "Invalid document ID format",
+      message: "Document ID must be a valid UUID",
+    });
+  }
+
+  try {
+    const result = await documentService.processDocumentIngestion(id);
+    return res.status(200).json({
+      message: "Document ingestion completed successfully",
+      document: result.document,
+      ingestion: result.ingestion,
+    });
+  } catch (error) {
+    console.error(`Error ingesting document ${id}:`, error.message);
+    if (error.code === "DOCUMENT_NOT_FOUND" || error.message?.includes("not found")) {
+      return res.status(404).json({
+        error: "Document not found",
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      error: "Ingestion failed",
+      message: error.message || "Failed to process document",
+    });
+  }
+});
+
 export default router;
+
